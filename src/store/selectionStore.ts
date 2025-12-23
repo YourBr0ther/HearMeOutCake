@@ -1,12 +1,11 @@
 import { create } from 'zustand';
-import type { ImageSearchResult } from '@/types/game';
 import { GAME_CONFIG } from '@/utils/constants';
 
 interface SelectedFlag {
   id: string;
   imageUrl: string;
   thumbnailUrl: string;
-  source: 'search' | 'camera' | 'library';
+  source: 'camera' | 'library';
 }
 
 interface SelectionState {
@@ -17,14 +16,6 @@ interface SelectionState {
   // Selected flags
   selectedFlags: SelectedFlag[];
 
-  // Search state
-  searchQuery: string;
-  searchResults: ImageSearchResult[];
-  isSearching: boolean;
-
-  // Active tab
-  activeTab: 'search' | 'camera' | 'library';
-
   // Actions
   setTimeRemaining: (time: number) => void;
   decrementTime: () => void;
@@ -32,21 +23,13 @@ interface SelectionState {
   addFlag: (flag: SelectedFlag) => boolean;
   removeFlag: (id: string) => void;
   reorderFlags: (flags: SelectedFlag[]) => void;
-  setSearchQuery: (query: string) => void;
-  setSearchResults: (results: ImageSearchResult[]) => void;
-  setIsSearching: (searching: boolean) => void;
-  setActiveTab: (tab: 'search' | 'camera' | 'library') => void;
   reset: () => void;
 }
 
 const initialState = {
   timeRemaining: GAME_CONFIG.TIMER_DURATION,
   timerActive: false,
-  selectedFlags: [],
-  searchQuery: '',
-  searchResults: [],
-  isSearching: false,
-  activeTab: 'search' as const,
+  selectedFlags: [] as SelectedFlag[],
 };
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
@@ -79,11 +62,6 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     })),
 
   reorderFlags: (selectedFlags) => set({ selectedFlags }),
-
-  setSearchQuery: (searchQuery) => set({ searchQuery }),
-  setSearchResults: (searchResults) => set({ searchResults }),
-  setIsSearching: (isSearching) => set({ isSearching }),
-  setActiveTab: (activeTab) => set({ activeTab }),
 
   reset: () => set(initialState),
 }));

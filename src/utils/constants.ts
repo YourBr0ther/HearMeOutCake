@@ -10,7 +10,6 @@ export const GAME_CONFIG = {
 export const API_CONFIG = {
   SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL || '',
   SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '',
-  PEXELS_API_KEY: process.env.EXPO_PUBLIC_PEXELS_API_KEY || '',
 } as const;
 
 // Theme suggestions for creating games

@@ -56,10 +56,3 @@ export interface RevealState {
   };
 }
 
-export interface ImageSearchResult {
-  id: string;
-  url: string;
-  thumbnailUrl: string;
-  photographer?: string;
-  alt?: string;
-}

@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -7,23 +7,19 @@ import {
   FlatList,
   Alert,
   Image,
-  TextInput,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Timer, ProgressBar, Card } from '@/components/ui';
+import { Timer, ProgressBar } from '@/components/ui';
 import { colors } from '@/theme';
 import { GAME_CONFIG } from '@/utils/constants';
-import { imageSearchService } from '@/services/imageSearchService';
 import { roomService } from '@/services/roomService';
 import { useGameStore } from '@/store/gameStore';
 import { useSelectionStore } from '@/store/selectionStore';
-import type { ImageSearchResult, GameRoom } from '@/types/game';
-
-type Tab = 'search' | 'camera' | 'library';
+import type { GameRoom } from '@/types/game';
 
 export default function SelectionScreen() {
   const router = useRouter();
@@ -37,20 +33,12 @@ export default function SelectionScreen() {
 
   const timeRemaining = useSelectionStore((state) => state.timeRemaining);
   const selectedFlags = useSelectionStore((state) => state.selectedFlags);
-  const searchQuery = useSelectionStore((state) => state.searchQuery);
-  const searchResults = useSelectionStore((state) => state.searchResults);
-  const isSearching = useSelectionStore((state) => state.isSearching);
-  const activeTab = useSelectionStore((state) => state.activeTab);
   const decrementTime = useSelectionStore((state) => state.decrementTime);
   const addFlag = useSelectionStore((state) => state.addFlag);
   const removeFlag = useSelectionStore((state) => state.removeFlag);
-  const setSearchQuery = useSelectionStore((state) => state.setSearchQuery);
-  const setSearchResults = useSelectionStore((state) => state.setSearchResults);
-  const setIsSearching = useSelectionStore((state) => state.setIsSearching);
-  const setActiveTab = useSelectionStore((state) => state.setActiveTab);
-  const resetSelection = useSelectionStore((state) => state.reset);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [hasSubmittedLocal, setHasSubmittedLocal] = useState(false);
 
   // Subscribe to room changes
   useEffect(() => {
@@ -76,37 +64,12 @@ export default function SelectionScreen() {
     };
   }, [room?.id, isHost, setRoom, setOpponentSubmitted, setPhase, router]);
 
-  // Search for images with debounce
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
+  const handlePickFromLibrary = async () => {
+    if (selectedFlags.length >= GAME_CONFIG.MAX_FLAGS) {
+      Alert.alert('Limit Reached', `You can only select ${GAME_CONFIG.MAX_FLAGS} images.`);
       return;
     }
 
-    const timeoutId = setTimeout(async () => {
-      setIsSearching(true);
-      const results = await imageSearchService.search(searchQuery);
-      setSearchResults(results);
-      setIsSearching(false);
-    }, 500);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery, setSearchResults, setIsSearching]);
-
-  const handleSelectImage = (image: ImageSearchResult) => {
-    const added = addFlag({
-      id: image.id,
-      imageUrl: image.url,
-      thumbnailUrl: image.thumbnailUrl,
-      source: 'search',
-    });
-
-    if (!added && selectedFlags.length >= GAME_CONFIG.MAX_FLAGS) {
-      Alert.alert('Limit Reached', `You can only select ${GAME_CONFIG.MAX_FLAGS} images.`);
-    }
-  };
-
-  const handlePickFromLibrary = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true,
@@ -116,20 +79,21 @@ export default function SelectionScreen() {
 
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-      const added = addFlag({
+      addFlag({
         id: `library-${Date.now()}`,
         imageUrl: asset.uri,
         thumbnailUrl: asset.uri,
         source: 'library',
       });
-
-      if (!added && selectedFlags.length >= GAME_CONFIG.MAX_FLAGS) {
-        Alert.alert('Limit Reached', `You can only select ${GAME_CONFIG.MAX_FLAGS} images.`);
-      }
     }
   };
 
   const handleTakePhoto = async () => {
+    if (selectedFlags.length >= GAME_CONFIG.MAX_FLAGS) {
+      Alert.alert('Limit Reached', `You can only select ${GAME_CONFIG.MAX_FLAGS} images.`);
+      return;
+    }
+
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
       Alert.alert('Permission Required', 'Camera access is needed to take photos.');
@@ -144,16 +108,12 @@ export default function SelectionScreen() {
 
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-      const added = addFlag({
+      addFlag({
         id: `camera-${Date.now()}`,
         imageUrl: asset.uri,
         thumbnailUrl: asset.uri,
         source: 'camera',
       });
-
-      if (!added && selectedFlags.length >= GAME_CONFIG.MAX_FLAGS) {
-        Alert.alert('Limit Reached', `You can only select ${GAME_CONFIG.MAX_FLAGS} images.`);
-      }
     }
   };
 
@@ -179,6 +139,7 @@ export default function SelectionScreen() {
 
       await roomService.submitFlags(room.id, playerId, isHost, flagsToSubmit);
       setHasSubmitted(true);
+      setHasSubmittedLocal(true);
     } catch (error) {
       console.error('Failed to submit flags:', error);
       Alert.alert('Error', 'Failed to submit flags. Please try again.');
@@ -187,31 +148,42 @@ export default function SelectionScreen() {
     }
   };
 
-  const handleTimerTick = useCallback(() => {
+  const handleTimerTick = () => {
     decrementTime();
-    if (timeRemaining <= 1) {
+    if (timeRemaining <= 1 && !hasSubmittedLocal) {
       handleSubmit();
     }
-  }, [decrementTime, timeRemaining]);
-
-  const renderImageItem = ({ item }: { item: ImageSearchResult }) => {
-    const isSelected = selectedFlags.some((f) => f.id === item.id);
-
-    return (
-      <TouchableOpacity
-        style={[styles.imageItem, isSelected && styles.imageItemSelected]}
-        onPress={() => handleSelectImage(item)}
-        disabled={isSelected}
-      >
-        <Image source={{ uri: item.thumbnailUrl }} style={styles.image} />
-        {isSelected && (
-          <View style={styles.selectedOverlay}>
-            <Ionicons name="checkmark-circle" size={32} color={colors.primary.DEFAULT} />
-          </View>
-        )}
-      </TouchableOpacity>
-    );
   };
+
+  const renderSelectedFlag = ({ item, index }: { item: typeof selectedFlags[0]; index: number }) => (
+    <View style={styles.selectedFlagContainer}>
+      <Image source={{ uri: item.thumbnailUrl }} style={styles.selectedFlagImage} />
+      <TouchableOpacity
+        style={styles.removeButton}
+        onPress={() => removeFlag(item.id)}
+      >
+        <Ionicons name="close" size={16} color={colors.neutral.white} />
+      </TouchableOpacity>
+      <View style={styles.flagNumber}>
+        <Text style={styles.flagNumberText}>{index + 1}</Text>
+      </View>
+    </View>
+  );
+
+  if (hasSubmittedLocal) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.waitingContainer}>
+          <Text style={styles.waitingEmoji}>⏳</Text>
+          <Text style={styles.waitingTitle}>Flags Submitted!</Text>
+          <Text style={styles.waitingText}>
+            Waiting for the other player to finish...
+          </Text>
+          <ActivityIndicator size="large" color={colors.primary.DEFAULT} style={{ marginTop: 24 }} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -219,134 +191,60 @@ export default function SelectionScreen() {
       <View style={styles.header}>
         <View style={styles.themeContainer}>
           <Text style={styles.themeLabel}>Theme:</Text>
-          <Text style={styles.themeText} numberOfLines={1}>
+          <Text style={styles.themeText} numberOfLines={2}>
             {room?.theme}
           </Text>
         </View>
-        <Timer seconds={timeRemaining} onTick={handleTimerTick} size="sm" />
+        <Timer seconds={timeRemaining} onTick={handleTimerTick} size="md" />
       </View>
 
       {/* Progress */}
       <View style={styles.progress}>
+        <Text style={styles.progressLabel}>Select {GAME_CONFIG.MAX_FLAGS} images for your flags</Text>
         <ProgressBar current={selectedFlags.length} total={GAME_CONFIG.MAX_FLAGS} />
       </View>
 
-      {/* Tabs */}
-      <View style={styles.tabs}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'search' && styles.tabActive]}
-          onPress={() => setActiveTab('search')}
-        >
-          <Ionicons
-            name="search"
-            size={20}
-            color={activeTab === 'search' ? colors.primary.DEFAULT : colors.neutral.gray}
-          />
-          <Text style={[styles.tabText, activeTab === 'search' && styles.tabTextActive]}>
-            Search
-          </Text>
+      {/* Action Buttons */}
+      <View style={styles.actionButtons}>
+        <TouchableOpacity style={styles.actionButton} onPress={handleTakePhoto}>
+          <View style={[styles.actionIcon, { backgroundColor: colors.pastel.peach }]}>
+            <Ionicons name="camera" size={32} color={colors.orange.DEFAULT} />
+          </View>
+          <Text style={styles.actionText}>Take Photo</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'camera' && styles.tabActive]}
-          onPress={() => {
-            setActiveTab('camera');
-            handleTakePhoto();
-          }}
-        >
-          <Ionicons
-            name="camera"
-            size={20}
-            color={activeTab === 'camera' ? colors.primary.DEFAULT : colors.neutral.gray}
-          />
-          <Text style={[styles.tabText, activeTab === 'camera' && styles.tabTextActive]}>
-            Camera
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'library' && styles.tabActive]}
-          onPress={() => {
-            setActiveTab('library');
-            handlePickFromLibrary();
-          }}
-        >
-          <Ionicons
-            name="images"
-            size={20}
-            color={activeTab === 'library' ? colors.primary.DEFAULT : colors.neutral.gray}
-          />
-          <Text style={[styles.tabText, activeTab === 'library' && styles.tabTextActive]}>
-            Photos
-          </Text>
+
+        <TouchableOpacity style={styles.actionButton} onPress={handlePickFromLibrary}>
+          <View style={[styles.actionIcon, { backgroundColor: colors.pastel.lavender }]}>
+            <Ionicons name="images" size={32} color={colors.purple.DEFAULT} />
+          </View>
+          <Text style={styles.actionText}>Photo Library</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Search Input */}
-      {activeTab === 'search' && (
-        <View style={styles.searchContainer}>
-          <Ionicons name="search" size={20} color={colors.neutral.gray} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search for images..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholderTextColor={colors.neutral.gray}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={20} color={colors.neutral.gray} />
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-
-      {/* Image Grid */}
-      <View style={styles.gridContainer}>
-        {isSearching ? (
-          <ActivityIndicator size="large" color={colors.primary.DEFAULT} style={styles.loader} />
-        ) : searchResults.length > 0 ? (
+      {/* Selected Flags Grid */}
+      <View style={styles.selectedSection}>
+        <Text style={styles.selectedTitle}>Your Flags</Text>
+        {selectedFlags.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="flag-outline" size={48} color={colors.neutral.gray} />
+            <Text style={styles.emptyText}>
+              Take photos or pick from your library{'\n'}to add flags to the cake!
+            </Text>
+          </View>
+        ) : (
           <FlatList
-            data={searchResults}
-            renderItem={renderImageItem}
+            data={selectedFlags}
+            renderItem={renderSelectedFlag}
             keyExtractor={(item) => item.id}
             numColumns={3}
-            contentContainerStyle={styles.grid}
-            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.selectedGrid}
+            scrollEnabled={false}
           />
-        ) : searchQuery.length > 0 ? (
-          <Text style={styles.emptyText}>No images found. Try a different search.</Text>
-        ) : (
-          <Text style={styles.emptyText}>
-            Search for images or use camera/photos to add flags!
-          </Text>
         )}
       </View>
 
-      {/* Selected Flags Dock */}
-      <View style={styles.dock}>
-        <View style={styles.dockFlags}>
-          {Array.from({ length: GAME_CONFIG.MAX_FLAGS }).map((_, index) => {
-            const flag = selectedFlags[index];
-            return (
-              <View key={index} style={styles.dockSlot}>
-                {flag ? (
-                  <TouchableOpacity
-                    style={styles.dockFlag}
-                    onPress={() => removeFlag(flag.id)}
-                  >
-                    <Image source={{ uri: flag.thumbnailUrl }} style={styles.dockFlagImage} />
-                    <View style={styles.removeButton}>
-                      <Ionicons name="close" size={12} color={colors.neutral.white} />
-                    </View>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.dockSlotEmpty}>
-                    <Text style={styles.dockSlotNumber}>{index + 1}</Text>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-        </View>
+      {/* Submit Button */}
+      <View style={styles.footer}>
         <TouchableOpacity
           style={[
             styles.submitButton,
@@ -358,7 +256,12 @@ export default function SelectionScreen() {
           {isSubmitting ? (
             <ActivityIndicator size="small" color={colors.neutral.white} />
           ) : (
-            <Ionicons name="checkmark" size={24} color={colors.neutral.white} />
+            <>
+              <Ionicons name="checkmark-circle" size={24} color={colors.neutral.white} />
+              <Text style={styles.submitButtonText}>
+                Done ({selectedFlags.length}/{GAME_CONFIG.MAX_FLAGS})
+              </Text>
+            </>
           )}
         </TouchableOpacity>
       </View>
@@ -373,175 +276,171 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    gap: 16,
   },
   themeContainer: {
     flex: 1,
-    marginRight: 12,
   },
   themeLabel: {
     fontSize: 12,
     color: colors.neutral.gray,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   themeText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     color: colors.neutral.dark,
+    marginTop: 4,
   },
   progress: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  tabs: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
     gap: 8,
   },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: colors.neutral.white,
-    gap: 6,
-  },
-  tabActive: {
-    backgroundColor: colors.pastel.mint,
-  },
-  tabText: {
+  progressLabel: {
     fontSize: 14,
-    fontWeight: '500',
     color: colors.neutral.gray,
   },
-  tabTextActive: {
-    color: colors.primary.DEFAULT,
-    fontWeight: '600',
-  },
-  searchContainer: {
+  actionButtons: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.neutral.white,
-    marginHorizontal: 16,
-    marginTop: 12,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    gap: 8,
+    paddingHorizontal: 20,
+    gap: 16,
   },
-  searchInput: {
+  actionButton: {
     flex: 1,
-    paddingVertical: 12,
+    backgroundColor: colors.neutral.white,
+    borderRadius: 20,
+    padding: 20,
+    alignItems: 'center',
+    gap: 12,
+  },
+  actionIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionText: {
     fontSize: 16,
+    fontWeight: '600',
     color: colors.neutral.dark,
   },
-  gridContainer: {
+  selectedSection: {
     flex: 1,
-    paddingTop: 12,
+    paddingHorizontal: 20,
+    paddingTop: 24,
   },
-  grid: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
+  selectedTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.neutral.dark,
+    marginBottom: 16,
   },
-  imageItem: {
+  emptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: colors.neutral.gray,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  selectedGrid: {
+    gap: 12,
+  },
+  selectedFlagContainer: {
     flex: 1 / 3,
     aspectRatio: 1,
     margin: 4,
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: colors.neutral.white,
   },
-  imageItemSelected: {
-    opacity: 0.7,
-  },
-  image: {
-    width: '100%',
-    height: '100%',
-  },
-  selectedOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.7)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loader: {
-    flex: 1,
-  },
-  emptyText: {
-    textAlign: 'center',
-    color: colors.neutral.gray,
-    paddingHorizontal: 32,
-    marginTop: 40,
-    fontSize: 16,
-  },
-  dock: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.neutral.white,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderTopColor: colors.pastel.mint,
-    gap: 12,
-  },
-  dockFlags: {
-    flex: 1,
-    flexDirection: 'row',
-    gap: 8,
-  },
-  dockSlot: {
-    flex: 1,
-    aspectRatio: 1,
-  },
-  dockFlag: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  dockFlagImage: {
+  selectedFlagImage: {
     width: '100%',
     height: '100%',
   },
   removeButton: {
     position: 'absolute',
-    top: -4,
-    right: -4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    top: 6,
+    right: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: colors.pink.DEFAULT,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dockSlotEmpty: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 8,
-    borderWidth: 2,
-    borderStyle: 'dashed',
-    borderColor: colors.pastel.mint,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dockSlotNumber: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.neutral.gray,
-  },
-  submitButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  flagNumber: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: colors.primary.DEFAULT,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  flagNumberText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.neutral.white,
+  },
+  footer: {
+    padding: 20,
+    paddingBottom: 32,
+  },
+  submitButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary.DEFAULT,
+    paddingVertical: 16,
+    borderRadius: 16,
+    gap: 8,
+    borderBottomWidth: 4,
+    borderBottomColor: colors.primary.dark,
+  },
   submitButtonDisabled: {
     backgroundColor: colors.neutral.gray,
+    borderBottomColor: '#666',
     opacity: 0.5,
+  },
+  submitButtonText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.neutral.white,
+    textTransform: 'uppercase',
+  },
+  waitingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  waitingEmoji: {
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  waitingTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: colors.neutral.dark,
+    marginBottom: 8,
+  },
+  waitingText: {
+    fontSize: 16,
+    color: colors.neutral.gray,
+    textAlign: 'center',
   },
 });
