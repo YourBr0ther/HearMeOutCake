@@ -7,19 +7,13 @@ import {
   Image,
   Modal,
   Dimensions,
+  Animated,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withSequence,
-  withTiming,
-} from 'react-native-reanimated';
-import { Button, Card } from '@/components/ui';
+import { Button } from '@/components/ui';
 import { colors } from '@/theme';
 import { GAME_CONFIG } from '@/utils/constants';
 import { roomService } from '@/services/roomService';
@@ -47,8 +41,7 @@ export default function RevealScreen() {
 
   const [selectedFlag, setSelectedFlag] = useState<Flag | null>(null);
   const [showModal, setShowModal] = useState(false);
-
-  const flagScale = useSharedValue(0);
+  const [scaleAnim] = useState(new Animated.Value(0));
 
   // Load flags on mount
   useEffect(() => {
@@ -101,15 +94,6 @@ export default function RevealScreen() {
     return -1;
   };
 
-  const hostNextIndex = getNextUnrevealedIndex(
-    isHost ? myFlags : opponentFlags,
-    revealedHostFlags
-  );
-  const guestNextIndex = getNextUnrevealedIndex(
-    isHost ? opponentFlags : myFlags,
-    revealedGuestFlags
-  );
-
   const gameComplete =
     revealedHostFlags.length >= (isHost ? myFlags : opponentFlags).length &&
     revealedGuestFlags.length >= (isHost ? opponentFlags : myFlags).length;
@@ -117,24 +101,23 @@ export default function RevealScreen() {
   const handleRevealNext = async () => {
     if (!isMyTurn || !room?.id) return;
 
-    const flagsToUse = isHost ? myFlags : opponentFlags.length > 0 ? opponentFlags : myFlags;
-    const revealedFlags = isHost ? revealedHostFlags : revealedGuestFlags;
-    const nextIndex = getNextUnrevealedIndex(
-      isHost ? myFlags : opponentFlags,
-      isHost ? revealedHostFlags : revealedGuestFlags
-    );
+    const nextIndex = getNextUnrevealedIndex(myFlags, isHost ? revealedHostFlags : revealedGuestFlags);
 
     if (nextIndex === -1) return;
 
-    const flagToReveal = isHost ? myFlags[nextIndex] : myFlags[nextIndex];
+    const flagToReveal = myFlags[nextIndex];
 
-    // Animate
+    // Haptic feedback
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    flagScale.value = withSequence(
-      withTiming(0, { duration: 0 }),
-      withSpring(1.2, { damping: 8 }),
-      withSpring(1, { damping: 12 })
-    );
+
+    // Animate modal
+    scaleAnim.setValue(0);
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 8,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
 
     // Update local state
     revealFlag(isHost, nextIndex);
@@ -167,10 +150,6 @@ export default function RevealScreen() {
     resetSelection();
     router.replace('/');
   };
-
-  const animatedFlagStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: flagScale.value }],
-  }));
 
   const renderFlag = (flag: Flag | undefined, index: number, isHostFlag: boolean) => {
     const revealedFlags = isHostFlag ? revealedHostFlags : revealedGuestFlags;
@@ -284,7 +263,7 @@ export default function RevealScreen() {
           activeOpacity={1}
           onPress={() => setShowModal(false)}
         >
-          <Animated.View style={[styles.modalContent, animatedFlagStyle]}>
+          <Animated.View style={[styles.modalContent, { transform: [{ scale: scaleAnim }] }]}>
             {selectedFlag && (
               <>
                 <Image
